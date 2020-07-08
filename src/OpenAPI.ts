@@ -47,6 +47,7 @@ type OpenApiConfig = {
   socketURL: string;
   secretToken: string;
   brokerAccountId?: string;
+  extractPayload?: boolean,
 };
 
 type RequestConfig<Q, B> = {
@@ -62,6 +63,7 @@ export default class OpenAPI {
   private readonly apiURL: string;
   private readonly secretToken: string;
   private readonly authHeaders: any;
+  private readonly extractPayload: boolean;
 
   /**
    *
@@ -69,12 +71,14 @@ export default class OpenAPI {
    * @param socketURL Streaming api url см [документацию](https://tinkoffcreditsystems.github.io/invest-openapi/env/)
    * @param secretToken токен доступа см [получение токена доступа](https://tinkoffcreditsystems.github.io/invest-openapi/auth/)
    * @param brokerAccountId номер счета (по умолчанию - Тинькофф)
+   * @param extractPayload извлекать payload из тела ответа (по умолчанию - true)
    */
-  constructor({ apiURL, socketURL, secretToken, brokerAccountId }: OpenApiConfig) {
+  constructor({ apiURL, socketURL, secretToken, brokerAccountId, extractPayload = true }: OpenApiConfig) {
     this._streaming = new Streaming({ url: socketURL, secretToken });
     this._currentBrokerAccountId = brokerAccountId;
     this.apiURL = apiURL;
     this.secretToken = secretToken;
+    this.extractPayload = extractPayload;
     this.authHeaders = {
       Authorization: 'Bearer ' + this.secretToken,
       'Content-Type': 'application/json',
@@ -112,7 +116,11 @@ export default class OpenAPI {
 
     const data = await res.json();
 
-    return data.payload;
+    if (this.extractPayload) {
+      return data.payload;
+    }
+
+    return data;
   }
 
   /**
