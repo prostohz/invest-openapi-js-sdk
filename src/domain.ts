@@ -15,6 +15,11 @@ export type Error = {
     payload: ErrorPayload;
 };
 
+export type Response<P> = {
+    trackingId: string,
+    payload: P,
+};
+
 export type PortfolioResponse = {
     trackingId: string;
     status: string;

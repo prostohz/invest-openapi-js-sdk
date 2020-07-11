@@ -13,6 +13,7 @@ import {
   PlacedMarketOrder,
   Portfolio,
   PortfolioPosition,
+  Response,
   SandboxSetCurrencyBalanceRequest,
   SandboxSetPositionBalanceRequest,
   LimitOrderRequest,
@@ -87,7 +88,7 @@ export default class OpenAPI {
   private async makeRequest<Q, B, R>(
     url: string,
     { method = 'get', query, body }: RequestConfig<Q, B> = {}
-  ): Promise<R> {
+  ): Promise<Response<R>> {
     let requestParams: Record<string, any> = { method, headers: new Headers(this.authHeaders) };
     let requestUrl = this.apiURL + url + getQueryString(query || {});
 
@@ -97,22 +98,34 @@ export default class OpenAPI {
 
     const res = await fetch(requestUrl, requestParams);
 
-    // XXX для консистентности ошибок от API
-    if (res.status === 401) {
-      throw {
-        status: 'Error',
-        message:
-          'Unauthorized! Try to use valid token. https://tinkoffcreditsystems.github.io/invest-openapi/auth/',
-      };
+    try {
+      // XXX для консистентности ошибок от API
+      if (res.status === 401) {
+        throw {
+          status: 'Error',
+          message:
+            'Unauthorized! Try to use valid token. https://tinkoffcreditsystems.github.io/invest-openapi/auth/',
+        };
+      }
+
+      if (res.status === 429) {
+        throw {
+          status: 'Error',
+          message:
+            'Too many requests!',
+        };
+      }
+
+      if (!res.ok) {
+        throw await res.json();
+      }
+
+      return await res.json();
+    } catch (e) {
+      console.error(res);
+
+      throw e;
     }
-
-    if (!res.ok) {
-      throw await res.json();
-    }
-
-    const data = await res.json();
-
-    return data.payload;
   }
 
   /**
@@ -155,7 +168,7 @@ export default class OpenAPI {
    * Метод для задания баланса по бумагам
    * @param params см. описание типа
    */
-  async setPositionBalance(params: SandboxSetPositionBalanceRequest): Promise<void> {
+  async setPositionBalance(params: SandboxSetPositionBalanceRequest): Promise<Response<void>> {
     await this.sandboxRegister();
     return this.makeRequest('/sandbox/positions/balance', {
       method: 'post',
@@ -168,7 +181,7 @@ export default class OpenAPI {
    * Метод для задания баланса по валютам
    * @param params см. описание типа
    */
-  async setCurrenciesBalance(params: SandboxSetCurrencyBalanceRequest): Promise<void> {
+  async setCurrenciesBalance(params: SandboxSetCurrencyBalanceRequest): Promise<Response<void>> {
     await this.sandboxRegister();
     return this.makeRequest('/sandbox/currencies/balance', {
       method: 'post',
@@ -180,7 +193,7 @@ export default class OpenAPI {
   /**
    * Метод для получение портфеля цб
    */
-  portfolio(): Promise<Portfolio> {
+  portfolio(): Promise<Response<Portfolio>> {
     return this.makeRequest('/portfolio', {
       query: { brokerAccountId: this._currentBrokerAccountId },
     });
@@ -189,7 +202,7 @@ export default class OpenAPI {
   /**
    * Метод для получения валютных активов клиента
    */
-  portfolioCurrencies(): Promise<Currencies> {
+  portfolioCurrencies(): Promise<Response<Currencies>> {
     return this.makeRequest('/portfolio/currencies', {
       query: { brokerAccountId: this._currentBrokerAccountId },
     });
@@ -199,18 +212,24 @@ export default class OpenAPI {
    * Метод для получение данных по инструменту в портфеле
    * @param params см. описание типа
    */
-  instrumentPortfolio(params: InstrumentId): Promise<PortfolioPosition | null> {
-    return this.portfolio().then((x) => {
-      return (
-        x.positions.find((position) => {
-          if ('figi' in params) {
-            return position.figi === params.figi;
-          }
-          if ('ticker' in params) {
-            return position.ticker === params.ticker;
-          }
-        }) || null
-      );
+  instrumentPortfolio(params: InstrumentId): Promise<Response<PortfolioPosition | null>> {
+    return this.portfolio().then((response) => {
+      const {payload} = response;
+      const {positions} = payload;
+
+      const position = positions.find((position) => {
+        if ('figi' in params) {
+          return position.figi === params.figi;
+        }
+        if ('ticker' in params) {
+          return position.ticker === params.ticker;
+        }
+      }) || null;
+
+      return {
+        ...response,
+        payload: position,
+      }
     });
   }
 
@@ -226,7 +245,7 @@ export default class OpenAPI {
     lots,
     operation,
     price,
-  }: LimitOrderRequest & FIGI): Promise<PlacedLimitOrder> {
+  }: LimitOrderRequest & FIGI): Promise<Response<PlacedLimitOrder>> {
     return this.makeRequest('/orders/limit-order', {
       method: 'post',
       query: {
@@ -248,7 +267,7 @@ export default class OpenAPI {
    * @param operation тип заявки
    * @param price цена лимитной заявки
    */
-  marketOrder({ figi, lots, operation }: MarketOrderRequest & FIGI): Promise<PlacedMarketOrder> {
+  marketOrder({ figi, lots, operation }: MarketOrderRequest & FIGI): Promise<Response<PlacedMarketOrder>> {
     return this.makeRequest('/orders/market-order', {
       method: 'post',
       query: {
@@ -267,7 +286,7 @@ export default class OpenAPI {
    * Метод для отмены активных заявок
    * @param orderId идентифткатор заявки
    */
-  cancelOrder({ orderId }: { orderId: string }): Promise<void> {
+  cancelOrder({ orderId }: { orderId: string }): Promise<Response<void>> {
     return this.makeRequest(`/orders/cancel`, {
       method: 'post',
       query: {
@@ -280,7 +299,7 @@ export default class OpenAPI {
   /**
    * Метод для получения всех активных заявок
    */
-  orders(): Promise<Order[]> {
+  orders(): Promise<Response<Order[]>> {
     return this.makeRequest('/orders', {
       query: { brokerAccountId: this._currentBrokerAccountId },
     });
@@ -289,28 +308,28 @@ export default class OpenAPI {
   /**
    * Метод для получения всех доступных валютных инструментов
    */
-  currencies(): Promise<MarketInstrumentList> {
+  currencies(): Promise<Response<MarketInstrumentList>> {
     return this.makeRequest('/market/currencies');
   }
 
   /**
    * Метод для получения всех доступных валютных ETF
    */
-  etfs(): Promise<MarketInstrumentList> {
+  etfs(): Promise<Response<MarketInstrumentList>> {
     return this.makeRequest('/market/etfs');
   }
 
   /**
    * Метод для получения всех доступных облигаций
    */
-  bonds(): Promise<MarketInstrumentList> {
+  bonds(): Promise<Response<MarketInstrumentList>> {
     return this.makeRequest('/market/bonds');
   }
 
   /**
    * Метод для получения всех доступных акций
    */
-  stocks(): Promise<MarketInstrumentList> {
+  stocks(): Promise<Response<MarketInstrumentList>> {
     return this.makeRequest('/market/stocks');
   }
 
@@ -320,7 +339,7 @@ export default class OpenAPI {
    * @param to Конец временного промежутка в формате ISO 8601
    * @param figi Figi-идентификатор инструмента
    */
-  operations({ from, to, figi }: { from: string; to: string; figi?: string }): Promise<Operations> {
+  operations({ from, to, figi }: { from: string; to: string; figi?: string }): Promise<Response<Operations>> {
     return this.makeRequest('/operations', {
       query: {
         from,
@@ -348,7 +367,7 @@ export default class OpenAPI {
     to: string;
     figi: string;
     interval?: CandleResolution;
-  }): Promise<Candles> {
+  }): Promise<Response<Candles>> {
     return this.makeRequest('/market/candles', {
       query: { from, to, figi, interval },
     });
@@ -359,7 +378,7 @@ export default class OpenAPI {
    * @param figi Figi-идентификатор инструмента
    * @param depth
    */
-  orderbookGet({ figi, depth = 3 }: { figi: string; depth?: Depth }): Promise<Orderbook> {
+  orderbookGet({ figi, depth = 3 }: { figi: string; depth?: Depth }): Promise<Response<Orderbook>> {
     return this.makeRequest('/market/orderbook', {
       query: { figi, depth },
     });
@@ -368,11 +387,20 @@ export default class OpenAPI {
    * Метод для поиска инструментов по figi или ticker
    * @param params { figi или ticker }
    */
-  search(params: InstrumentId): Promise<MarketInstrumentList> {
+  search(params: InstrumentId): Promise<Response<MarketInstrumentList>> {
     if ('figi' in params) {
       return this.makeRequest<any, never, MarketInstrument>('/market/search/by-figi', {
         query: { figi: params.figi },
-      }).then((x) => (x ? { total: 1, instruments: [x] } : { total: 0, instruments: [] }));
+      }).then((response) => {
+        const payload = response.payload
+          ? { total: 1, instruments: [response.payload] }
+          : { total: 0, instruments: [] };
+
+        return {
+          ...response,
+          payload,
+        };
+      });
     }
     if ('ticker' in params) {
       return this.makeRequest('/market/search/by-ticker', {
@@ -386,8 +414,17 @@ export default class OpenAPI {
    * Метод для поиска инструмента по figi или ticker
    * @param params { figi или ticker }
    */
-  searchOne(params: InstrumentId): Promise<MarketInstrument | null> {
-    return this.search(params).then((x) => x.instruments[0] || null);
+  searchOne(params: InstrumentId): Promise<Response<MarketInstrument | null>> {
+    return this.search(params).then((response) => {
+      const payload = response.payload
+        ? response.payload.instruments[0]
+        : null;
+
+      return {
+        ...response,
+        payload
+      };
+    });
   }
 
   /**
@@ -440,7 +477,7 @@ export default class OpenAPI {
   /**
    * Метод для получения брокерских счетов клиента
    */
-  accounts(): Promise<UserAccounts> {
+  accounts(): Promise<Response<UserAccounts>> {
     return this.makeRequest('/user/accounts');
   }
 }
